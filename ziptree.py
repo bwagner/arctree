@@ -4,6 +4,7 @@
 # dependencies = []
 # ///
 
+import sys
 import zipfile
 from pathlib import PurePosixPath
 
@@ -61,7 +62,9 @@ def count_tree(tree):
     return dirs, files
 
 
-def ziptree(zip_path, show_hidden=False, show_macos=False, show_size=False):
+def ziptree(
+    zip_path, show_hidden=False, show_macos=False, show_size=False, stream=None
+):
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()
 
@@ -79,14 +82,16 @@ def ziptree(zip_path, show_hidden=False, show_macos=False, show_size=False):
 
         tree = build_tree(zf, names)
 
-    print(PurePosixPath(zip_path).name)
+    out = stream if stream is not None else sys.stdout
+
+    print(PurePosixPath(zip_path).name, file=out)
     for line in render_tree(tree, show_size):
-        print(line)
+        print(line, file=out)
 
     dirs, files = count_tree(tree)
     d = "directory" if dirs == 1 else "directories"
     f = "file" if files == 1 else "files"
-    print(f"\n{dirs} {d}, {files} {f}")
+    print(f"\n{dirs} {d}, {files} {f}", file=out)
 
 
 if __name__ == "__main__":

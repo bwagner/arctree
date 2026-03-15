@@ -29,6 +29,15 @@ def open_zip(buf):
     return zipfile.ZipFile(buf)
 
 
+def run(entries, tmp_path, **kwargs):
+    """Write a zip to tmp_path and run ziptree into a StringIO; return output."""
+    p = tmp_path / "test.zip"
+    p.write_bytes(make_zip(entries).read())
+    stream = io.StringIO()
+    ziptree(str(p), stream=stream, **kwargs)
+    return stream.getvalue()
+
+
 # ---------------------------------------------------------------------------
 # build_tree
 # ---------------------------------------------------------------------------
@@ -181,102 +190,60 @@ def test_render_tree_alphabetical_within_dirs_and_files():
 # Filtering (via ziptree integration)
 # ---------------------------------------------------------------------------
 
-def test_macos_filtered_by_default(tmp_path, capsys):
-    buf = make_zip([
-        ("real.txt", "hi"),
-        ("__MACOSX/._real.txt", "noise"),
-    ])
-    p = tmp_path / "test.zip"
-    p.write_bytes(buf.read())
-    ziptree(str(p))
-    out = capsys.readouterr().out
+def test_macos_filtered_by_default(tmp_path):
+    out = run([("real.txt", "hi"), ("__MACOSX/._real.txt", "noise")], tmp_path)
     assert "__MACOSX" not in out
     assert "real.txt" in out
 
 
-def test_macos_shown_without_dash_a(tmp_path, capsys):
+def test_macos_shown_without_dash_a(tmp_path):
     # --macos alone should be sufficient; -a should not be required
-    buf = make_zip([
-        ("real.txt", "hi"),
-        ("__MACOSX/._real.txt", "noise"),
-    ])
-    p = tmp_path / "test.zip"
-    p.write_bytes(buf.read())
-    ziptree(str(p), show_macos=True)
-    out = capsys.readouterr().out
+    out = run([("real.txt", "hi"), ("__MACOSX/._real.txt", "noise")], tmp_path,
+              show_macos=True)
     assert "__MACOSX" in out
 
 
-def test_dash_a_alone_does_not_reveal_macos(tmp_path, capsys):
+def test_dash_a_alone_does_not_reveal_macos(tmp_path):
     # -a controls dotfiles; __MACOSX visibility is controlled solely by --macos
-    buf = make_zip([
-        ("real.txt", "hi"),
-        ("__MACOSX/._real.txt", "noise"),
-    ])
-    p = tmp_path / "test.zip"
-    p.write_bytes(buf.read())
-    ziptree(str(p), show_hidden=True)
-    out = capsys.readouterr().out
+    out = run([("real.txt", "hi"), ("__MACOSX/._real.txt", "noise")], tmp_path,
+              show_hidden=True)
     assert "__MACOSX" not in out
 
 
-def test_macos_does_not_reveal_dotfiles_outside_macos(tmp_path, capsys):
+def test_macos_does_not_reveal_dotfiles_outside_macos(tmp_path):
     # --macos exemption is scoped to __MACOSX/ only
-    buf = make_zip([
-        ("real.txt", "hi"),
-        (".hidden", "no"),
-        ("__MACOSX/._real.txt", "noise"),
-    ])
-    p = tmp_path / "test.zip"
-    p.write_bytes(buf.read())
-    ziptree(str(p), show_macos=True)
-    out = capsys.readouterr().out
+    out = run([("real.txt", "hi"), (".hidden", "no"), ("__MACOSX/._real.txt", "noise")],
+              tmp_path, show_macos=True)
     assert ".hidden" not in out
 
 
-def test_dotfiles_filtered_by_default(tmp_path, capsys):
-    buf = make_zip([
-        ("visible.txt", "yes"),
-        (".hidden", "no"),
-        ("dir/.DS_Store", "no"),
-    ])
-    p = tmp_path / "test.zip"
-    p.write_bytes(buf.read())
-    ziptree(str(p))
-    out = capsys.readouterr().out
+def test_dotfiles_filtered_by_default(tmp_path):
+    out = run([("visible.txt", "yes"), (".hidden", "no"), ("dir/.DS_Store", "no")],
+              tmp_path)
     assert ".hidden" not in out
     assert ".DS_Store" not in out
     assert "visible.txt" in out
 
 
-def test_dotfiles_shown_with_all(tmp_path, capsys):
-    buf = make_zip([
-        ("visible.txt", "yes"),
-        (".hidden", "no"),
-    ])
-    p = tmp_path / "test.zip"
-    p.write_bytes(buf.read())
-    ziptree(str(p), show_hidden=True)
-    out = capsys.readouterr().out
+def test_dotfiles_shown_with_all(tmp_path):
+    out = run([("visible.txt", "yes"), (".hidden", "no")], tmp_path, show_hidden=True)
     assert ".hidden" in out
 
 
-def test_empty_zip(tmp_path, capsys):
-    buf = make_zip([])
-    p = tmp_path / "empty.zip"
-    p.write_bytes(buf.read())
-    ziptree(str(p))
-    out = capsys.readouterr().out
+def test_empty_zip(tmp_path):
+    out = run([], tmp_path)
     assert "0 directories, 0 files" in out
 
 
-def test_summary_line(tmp_path, capsys):
-    buf = make_zip([
-        ("a/b.txt", "x"),
-        ("c.txt", "y"),
-    ])
+def test_summary_line(tmp_path):
+    out = run([("a/b.txt", "x"), ("c.txt", "y")], tmp_path)
+    assert "1 directory, 2 files" in out
+
+
+def test_default_stream_is_stdout(tmp_path, capsys):
+    # when no stream is passed, output goes to stdout
     p = tmp_path / "test.zip"
-    p.write_bytes(buf.read())
+    p.write_bytes(make_zip([("a.txt", "hi")]).read())
     ziptree(str(p))
     out = capsys.readouterr().out
-    assert "1 directory, 2 files" in out
+    assert "a.txt" in out

@@ -49,6 +49,23 @@ powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | ie
 | `-m`, `--macos` | Show `__MACOSX` metadata entries (includes their `._*` contents; `-a` not required) |
 | `-s`, `--size` | Show uncompressed file sizes |
 
+## Use as a module
+
+```python
+import io
+from ziptree import ziptree
+
+# print to stdout (default)
+ziptree("archive.zip")
+
+# capture output
+stream = io.StringIO()
+ziptree("archive.zip", show_size=True, stream=stream)
+output = stream.getvalue()
+```
+
+Lower-level functions `build_tree`, `render_tree`, and `count_tree` are also importable for custom processing.
+
 ## Notes
 
 - `__MACOSX/` entries and dotfiles are hidden by default, matching the behaviour of `tree`.
