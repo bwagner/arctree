@@ -1,0 +1,282 @@
+import io
+import zipfile
+
+from ziptree import build_tree, count_tree, render_tree, ziptree
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def make_zip(entries):
+    """
+    Build an in-memory ZIP and return its BytesIO.
+
+    entries: list of (name, content) where content=None means a directory entry
+             (stored with trailing slash, zero bytes).
+    """
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as zf:
+        for name, content in entries:
+            if content is None:
+                zf.mkdir(name) if hasattr(zf, "mkdir") else zf.writestr(name + "/", "")
+            else:
+                zf.writestr(name, content)
+    buf.seek(0)
+    return buf
+
+
+def open_zip(buf):
+    return zipfile.ZipFile(buf)
+
+
+# ---------------------------------------------------------------------------
+# build_tree
+# ---------------------------------------------------------------------------
+
+def test_build_tree_explicit_directory_entries():
+    buf = make_zip([
+        ("a/", None),
+        ("a/b/", None),
+        ("a/b/c.txt", "hello"),
+    ])
+    with open_zip(buf) as zf:
+        tree = build_tree(zf, zf.namelist())
+    assert isinstance(tree["a"], dict)
+    assert isinstance(tree["a"]["b"], dict)
+    assert tree["a"]["b"]["c.txt"] == 5
+
+
+def test_build_tree_implicit_directories():
+    """ZIP with no directory entries - dirs must be inferred from file paths."""
+    buf = make_zip([
+        ("a/b/c.txt", "hello"),
+        ("a/b/d.txt", "world"),
+        ("a/e.txt", "!"),
+    ])
+    with open_zip(buf) as zf:
+        tree = build_tree(zf, zf.namelist())
+    assert isinstance(tree["a"], dict)
+    assert isinstance(tree["a"]["b"], dict)
+    assert set(tree["a"]["b"]) == {"c.txt", "d.txt"}
+    assert set(tree["a"]) == {"b", "e.txt"}
+
+
+def test_build_tree_root_level_files_only():
+    buf = make_zip([("foo.txt", "x"), ("bar.txt", "yy")])
+    with open_zip(buf) as zf:
+        tree = build_tree(zf, zf.namelist())
+    assert tree == {"foo.txt": 1, "bar.txt": 2}
+
+
+def test_build_tree_empty_name_list():
+    buf = make_zip([("a.txt", "hi")])
+    with open_zip(buf) as zf:
+        tree = build_tree(zf, [])
+    assert tree == {}
+
+
+def test_build_tree_file_size_captured():
+    content = "x" * 100
+    buf = make_zip([("big.txt", content)])
+    with open_zip(buf) as zf:
+        tree = build_tree(zf, zf.namelist())
+    assert tree["big.txt"] == 100
+
+
+def test_build_tree_deep_nesting():
+    buf = make_zip([("a/b/c/d/e/f.txt", "deep")])
+    with open_zip(buf) as zf:
+        tree = build_tree(zf, zf.namelist())
+    node = tree
+    for part in ["a", "b", "c", "d", "e"]:
+        assert isinstance(node[part], dict)
+        node = node[part]
+    assert node["f.txt"] == 4
+
+
+def test_build_tree_multiple_files_same_dir():
+    buf = make_zip([
+        ("dir/one.txt", "a"),
+        ("dir/two.txt", "bb"),
+        ("dir/three.txt", "ccc"),
+    ])
+    with open_zip(buf) as zf:
+        tree = build_tree(zf, zf.namelist())
+    assert set(tree["dir"]) == {"one.txt", "two.txt", "three.txt"}
+
+
+# ---------------------------------------------------------------------------
+# count_tree
+# ---------------------------------------------------------------------------
+
+def test_count_tree_flat_files():
+    tree = {"a.txt": 1, "b.txt": 2}
+    assert count_tree(tree) == (0, 2)
+
+
+def test_count_tree_one_dir():
+    tree = {"subdir": {"a.txt": 1}}
+    assert count_tree(tree) == (1, 1)
+
+
+def test_count_tree_nested():
+    buf = make_zip([
+        ("a/b/c.txt", "x"),
+        ("a/d.txt", "y"),
+        ("e.txt", "z"),
+    ])
+    with open_zip(buf) as zf:
+        tree = build_tree(zf, zf.namelist())
+    dirs, files = count_tree(tree)
+    assert dirs == 2  # a, a/b
+    assert files == 3
+
+
+def test_count_tree_empty():
+    assert count_tree({}) == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# render_tree
+# ---------------------------------------------------------------------------
+
+def test_render_tree_connector_symbols():
+    tree = {"a": {}, "b.txt": 0}
+    lines = render_tree(tree)
+    # dirs before files
+    assert lines[0].startswith("├── a")
+    assert lines[1].startswith("└── b.txt")
+
+
+def test_render_tree_last_entry_uses_corner():
+    tree = {"only.txt": 42}
+    lines = render_tree(tree)
+    assert lines[0].startswith("└── ")
+
+
+def test_render_tree_size_shown_for_files_only():
+    tree = {"dir": {"f.txt": 99}, "root.txt": 7}
+    lines = render_tree(tree, show_size=True)
+    file_line = next(line for line in lines if "root.txt" in line)
+    assert "[" in file_line
+    dir_line = next(line for line in lines if "dir" in line and "f.txt" not in line)
+    assert "[" not in dir_line
+
+
+def test_render_tree_indentation_depth():
+    tree = {"a": {"b": {"c.txt": 1}}}
+    lines = render_tree(tree)
+    c_line = next(line for line in lines if "c.txt" in line)
+    assert c_line.startswith("    ")  # at least one level of indent
+
+
+def test_render_tree_alphabetical_within_dirs_and_files():
+    tree = {"zebra": {}, "apple": {}, "mango.txt": 0, "ant.txt": 0}
+    lines = render_tree(tree)
+    names = [line.split("── ")[1] for line in lines]
+    assert names == ["apple", "zebra", "ant.txt", "mango.txt"]
+
+
+# ---------------------------------------------------------------------------
+# Filtering (via ziptree integration)
+# ---------------------------------------------------------------------------
+
+def test_macos_filtered_by_default(tmp_path, capsys):
+    buf = make_zip([
+        ("real.txt", "hi"),
+        ("__MACOSX/._real.txt", "noise"),
+    ])
+    p = tmp_path / "test.zip"
+    p.write_bytes(buf.read())
+    ziptree(str(p))
+    out = capsys.readouterr().out
+    assert "__MACOSX" not in out
+    assert "real.txt" in out
+
+
+def test_macos_shown_without_dash_a(tmp_path, capsys):
+    # --macos alone should be sufficient; -a should not be required
+    buf = make_zip([
+        ("real.txt", "hi"),
+        ("__MACOSX/._real.txt", "noise"),
+    ])
+    p = tmp_path / "test.zip"
+    p.write_bytes(buf.read())
+    ziptree(str(p), show_macos=True)
+    out = capsys.readouterr().out
+    assert "__MACOSX" in out
+
+
+def test_dash_a_alone_does_not_reveal_macos(tmp_path, capsys):
+    # -a controls dotfiles; __MACOSX visibility is controlled solely by --macos
+    buf = make_zip([
+        ("real.txt", "hi"),
+        ("__MACOSX/._real.txt", "noise"),
+    ])
+    p = tmp_path / "test.zip"
+    p.write_bytes(buf.read())
+    ziptree(str(p), show_hidden=True)
+    out = capsys.readouterr().out
+    assert "__MACOSX" not in out
+
+
+def test_macos_does_not_reveal_dotfiles_outside_macos(tmp_path, capsys):
+    # --macos exemption is scoped to __MACOSX/ only
+    buf = make_zip([
+        ("real.txt", "hi"),
+        (".hidden", "no"),
+        ("__MACOSX/._real.txt", "noise"),
+    ])
+    p = tmp_path / "test.zip"
+    p.write_bytes(buf.read())
+    ziptree(str(p), show_macos=True)
+    out = capsys.readouterr().out
+    assert ".hidden" not in out
+
+
+def test_dotfiles_filtered_by_default(tmp_path, capsys):
+    buf = make_zip([
+        ("visible.txt", "yes"),
+        (".hidden", "no"),
+        ("dir/.DS_Store", "no"),
+    ])
+    p = tmp_path / "test.zip"
+    p.write_bytes(buf.read())
+    ziptree(str(p))
+    out = capsys.readouterr().out
+    assert ".hidden" not in out
+    assert ".DS_Store" not in out
+    assert "visible.txt" in out
+
+
+def test_dotfiles_shown_with_all(tmp_path, capsys):
+    buf = make_zip([
+        ("visible.txt", "yes"),
+        (".hidden", "no"),
+    ])
+    p = tmp_path / "test.zip"
+    p.write_bytes(buf.read())
+    ziptree(str(p), show_hidden=True)
+    out = capsys.readouterr().out
+    assert ".hidden" in out
+
+
+def test_empty_zip(tmp_path, capsys):
+    buf = make_zip([])
+    p = tmp_path / "empty.zip"
+    p.write_bytes(buf.read())
+    ziptree(str(p))
+    out = capsys.readouterr().out
+    assert "0 directories, 0 files" in out
+
+
+def test_summary_line(tmp_path, capsys):
+    buf = make_zip([
+        ("a/b.txt", "x"),
+        ("c.txt", "y"),
+    ])
+    p = tmp_path / "test.zip"
+    p.write_bytes(buf.read())
+    ziptree(str(p))
+    out = capsys.readouterr().out
+    assert "1 directory, 2 files" in out
