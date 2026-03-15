@@ -162,8 +162,14 @@ def arctree(
         else:
             with tarfile.open(zip_path, "r:*") as tf:
                 entries = tar_entries(tf)
+        if not show_macos:
+            entries = [e for e in entries if not e.path.startswith("__MACOSX/")]
         if not show_hidden:
-            entries = [e for e in entries if not _is_hidden(e.path)]
+            entries = [
+                e for e in entries
+                if (show_macos and e.path.startswith("__MACOSX/"))
+                or not _is_hidden(e.path)
+            ]
 
     tree = build_tree(entries)
     out = stream if stream is not None else sys.stdout
@@ -190,7 +196,7 @@ def main() -> None:
                         help="show hidden files (dotfiles)")
     parser.add_argument("-m", "--macos", dest="show_macos", action="store_true",
                         help="show __MACOSX metadata entries "
-                             "(zip only; includes their ._* contents; -a not required)")
+                             "(includes their ._* contents; -a not required)")
     parser.add_argument("-s", "--size", dest="show_size", action="store_true",
                         help="show file sizes")
     args = parser.parse_args()

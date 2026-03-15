@@ -375,6 +375,18 @@ def test_tar_tgz_alias(tmp_path):
     assert "a.txt" in out
 
 
+def test_tar_macos_filtered_by_default(tmp_path):
+    out = run_tar([("real.txt", "hi"), ("__MACOSX/._real.txt", "noise")], tmp_path)
+    assert "__MACOSX" not in out
+    assert "real.txt" in out
+
+
+def test_tar_macos_shown_with_flag(tmp_path):
+    out = run_tar([("real.txt", "hi"), ("__MACOSX/._real.txt", "noise")], tmp_path,
+                  show_macos=True)
+    assert "__MACOSX" in out
+
+
 # ---------------------------------------------------------------------------
 # tar.zst
 # ---------------------------------------------------------------------------
