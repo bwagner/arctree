@@ -24,7 +24,7 @@ Three Seminars wrt pattern filler.zip
 
 ## Installation
 
-Install [uv](https://github.com/astral-sh/uv) if you don't have it:
+Install [uv](https://github.com/astral-sh/uv) if you don't have it (no root or admin privileges required):
 
 ```bash
 # macOS / Linux
